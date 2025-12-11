@@ -287,36 +287,35 @@ def generate_blog_content(
     city_zh: str,
     country: str,
     lang: str,
+    preferred_model: Optional[str] = None,
 ) -> Tuple[str, str, str, Optional[str], Optional[str]]:
-    if not model_ids:
-        raise RuntimeError("No models available to generate from.")
     if not token:
         raise RuntimeError("HF_TOKEN is required for generation.")
 
     client = InferenceClient(api_key=token)
-    candidates = model_ids.copy()
-    random.shuffle(candidates)
 
-    # Add some known reliable models as fallback candidates
-    fallback_models = [
-        "deepseek-ai/DeepSeek-V3",
-        "Qwen/Qwen2.5-72B-Instruct",
-        "meta-llama/Meta-Llama-3-8B-Instruct",
-        "mistralai/Mistral-7B-Instruct-v0.3",
-    ]
-    for fm in fallback_models:
-        if fm not in candidates:
-            candidates.append(fm)
+    # Build an ordered list of models to try:
+    # 1) preferred_model (if provided), 2) random order of fetched models.
+    models_to_try: List[str] = []
+    if preferred_model:
+        models_to_try.append(preferred_model)
+
+    pool = model_ids.copy() if model_ids else []
+    random.shuffle(pool)
+    for m in pool:
+        if m != preferred_model:
+            models_to_try.append(m)
+
+    if not models_to_try:
+        raise RuntimeError("No models available to generate from (preferred model missing and fetch failed).")
 
     last_error: Optional[Exception] = None
-    max_tries = MAX_GENERATION_TRIES
+    max_tries = min(MAX_GENERATION_TRIES, len(models_to_try))
 
     prompt_template = DEFAULT_PROMPT_EN if lang == "en" else DEFAULT_PROMPT_ZH
     prompt = prompt_template.format(city_en=city_en, city_zh=city_zh, country=country)
 
-    for attempt, model_id in enumerate(candidates, start=1):
-        if attempt > max_tries:
-            break
+    for attempt, model_id in enumerate(models_to_try[:max_tries], start=1):
         try:
             print(
                 f"Generating {lang.upper()} content with model ({attempt}/{max_tries}): {model_id}"
@@ -379,8 +378,7 @@ def generate_blog_content(
             time.sleep(SLEEP_SECONDS)
 
     raise RuntimeError(
-        f"Generation failed for {lang} after {min(len(candidates), MAX_GENERATION_TRIES)} tries. "
-        f"Last error: {last_error}"
+        f"Generation failed for {lang} after {max_tries} tries. Last error: {last_error}"
     )
 
 
@@ -491,7 +489,12 @@ def main() -> None:
     # Ensure local repo is up to date
     ensure_local_repo(gh_token)
 
-    model_ids = fetch_models(token=hf_token)
+    try:
+        model_ids = fetch_models(token=hf_token)
+    except Exception as e:
+        print(f"Warning: Failed to fetch models from API: {e}")
+        print("Proceeding with preferred model (if any).")
+        model_ids = []
 
     city_override = os.getenv("CITY_EN")
     if city_override:
@@ -529,6 +532,7 @@ def main() -> None:
 
     # Generate English Content
     print("\n--- Generating English Content ---")
+    preferred_model = os.getenv("PREFERRED_MODEL")
     summary_en, content_en, model_en, _, _ = generate_blog_content(
         model_ids,
         token=hf_token,
@@ -536,6 +540,7 @@ def main() -> None:
         city_zh=city_zh,
         country=country,
         lang="en",
+        preferred_model=preferred_model,
     )
 
     # Generate Chinese Content
@@ -548,6 +553,7 @@ def main() -> None:
             city_zh=city_zh,
             country=country,
             lang="zh",
+            preferred_model=preferred_model,
         )
     )
 

@@ -1,0 +1,164 @@
+name: Generate Post from Issue Comment
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  generate-post:
+    # Only run on issue #1 comments
+    if: github.event.issue.number == 1
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_TOKEN }}
+          
+      - name: Parse city from comment
+        id: parse-city
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body.trim();
+            
+            // Try to extract city name from various formats:
+            // "Generate Tokyo, Japan"
+            // "Tokyo, Japan"
+            // "Request: Paris, France"
+            // "Beijing, China, deepseek-ai/DeepSeek-V3.2"
+            const cityMatch = comment.match(/(?:generate|request|create)?[:\s]*([^,\n]+),\s*([^,\n]+)(?:,\s*([^,\n]+))?/i);
+            
+            if (!cityMatch) {
+              core.setFailed('Could not parse city name. Please format as: "CityName, Country" or "CityName, Country, ModelName"');
+              return;
+            }
+            
+            const cityEn = cityMatch[1].trim();
+            const country = cityMatch[2].trim();
+            const model = cityMatch[3] ? cityMatch[3].trim() : '';
+            
+            core.setOutput('city_en', cityEn);
+            core.setOutput('country', country);
+            core.setOutput('preferred_model', model);
+            core.setOutput('slug', cityEn.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''));
+            
+            console.log(`Parsed city: ${cityEn}, ${country}`);
+            if (model) {
+              console.log(`Preferred model: ${model}`);
+            }
+            
+      - name: React to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+            
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          
+      - name: Generate post via HuggingFace
+        id: generate
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          CITY_EN: ${{ steps.parse-city.outputs.city_en }}
+          COUNTRY: ${{ steps.parse-city.outputs.country }}
+          PREFERRED_MODEL: ${{ steps.parse-city.outputs.preferred_model }}
+          POST_DATE: ${{ github.event.comment.created_at }}
+        run: |
+          # Run the generation script using uv
+          uv run generate_post.py
+          
+          # Output the slug for later use
+          echo "slug=${{ steps.parse-city.outputs.slug }}" >> $GITHUB_OUTPUT
+          
+      - name: Add success reaction
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+            
+      - name: Add failure reaction
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'confused'
+            });
+            
+      - name: Wait for deployment
+        if: success()
+        run: |
+          echo "Waiting for the automatic deployment (triggered by push) to complete..."
+          # Give GitHub Pages some time to build and deploy
+          sleep 180
+          
+      - name: Reply with post link
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const slug = '${{ steps.generate.outputs.slug }}';
+            const cityEn = '${{ steps.parse-city.outputs.city_en }}';
+            const country = '${{ steps.parse-city.outputs.country }}';
+            
+            const message = `✅ **Blog post generated successfully!**
+            
+            **City:** ${cityEn}, ${country}
+            
+            **View your post:**
+            - 🇬🇧 English: https://see-the-world-by-llm.github.io/posts/${slug}/en
+            - 🇨🇳 Chinese: https://see-the-world-by-llm.github.io/posts/${slug}/zh
+            
+            The post should be live in a few minutes once the deployment completes. 🚀`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            });
+            
+      - name: Reply with error
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `❌ **Failed to generate blog post**
+            
+            There was an error generating the post. Please check:
+            - The city and country names are spelled correctly
+            - Format: "CityName, Country" (e.g., "Tokyo, Japan")
+            
+            You can view the workflow logs for more details.`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            });
