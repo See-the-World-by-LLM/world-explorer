@@ -10,9 +10,11 @@
 # ///
 from __future__ import annotations
 
+import argparse
 import io
 import os
 import random
+import re
 import subprocess
 import time
 from datetime import date
@@ -71,14 +73,78 @@ DEFAULT_PROMPT_ZH = (
 GITHUB_REPO = os.getenv("GH_REPO", "See-the-World-by-LLM/see-the-world-by-llm")
 POSTS_DIR = "src/data/posts"
 CITY_LIST_PATH = os.getenv("CITY_LIST_PATH", "src/data/cities.txt")
-DEFAULT_CITY_EN = os.getenv("CITY_EN", "Tokyo")
-DEFAULT_CITY_ZH = os.getenv("CITY_ZH", "东京")
-DEFAULT_COUNTRY = os.getenv("COUNTRY", "Japan")
-DEFAULT_PHOTO = os.getenv("PHOTO_URL", "/images/cities/tokyo.jpg")
 
 MIN_CONTENT_LEN = 200
 IMAGE_MODEL = "Tongyi-MAI/Z-Image-Turbo"
 LOCAL_REPO_PATH = Path("see-the-world-by-llm")
+
+
+def slugify(city_en: str) -> str:
+    # Lowercase, replace non-alnum with '-', collapse repeats, trim edges
+    slug = re.sub(r"[^a-z0-9]+", "-", city_en.lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "post"
+
+
+def ensure_unique_slug(base_slug: str) -> str:
+    """If a post folder already exists for this slug, append a numeric suffix."""
+    posts_root = LOCAL_REPO_PATH / "src/data/posts"
+    slug = base_slug
+    counter = 2
+    while (posts_root / slug).exists():
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+    return slug
+
+
+def write_github_output(city_en: str, country: str, slug: str) -> None:
+    output_path = os.getenv("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    try:
+        with open(output_path, "a", encoding="utf-8") as fh:
+            fh.write(f"city_en={city_en}\n")
+            fh.write(f"country={country}\n")
+            fh.write(f"slug={slug}\n")
+    except Exception as exc:
+        print(f"Failed to write GitHub outputs: {exc}")
+
+
+def resolve_city_and_photo(
+    city_en_arg: Optional[str], country_arg: Optional[str]
+) -> Tuple[str, str, str, str, str]:
+    """Return city_en, city_zh, country, slug, photo_url."""
+
+    if city_en_arg and country_arg:
+        city_en = city_en_arg.strip()
+        country = country_arg.strip()
+        slug = slugify(city_en)
+        city_zh = city_en
+        photo_url = f"/images/cities/{slug}.jpg"
+        return city_en, city_zh, country, slug, photo_url
+
+    print("City/Country not provided via CLI; selecting from cities list.")
+    cities = load_city_pool()
+    used = load_used_cities()
+    chosen_city = choose_city(cities, used)
+
+    city_en = chosen_city["en"]
+    country = chosen_city["country"]
+    city_zh = chosen_city.get("zh") or city_en
+    slug = chosen_city.get("slug") or slugify(city_en)
+    photo_url = chosen_city.get("photoUrl") or f"/images/cities/{slug}.jpg"
+
+    return city_en, city_zh, country, slug, photo_url
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate a city blog post.")
+    parser.add_argument("--city-en", dest="city_en", help="City name in English")
+    parser.add_argument("--country", dest="country", help="Country name")
+    parser.add_argument(
+        "--preferred-model", dest="preferred_model", help="Preferred HF model id (optional)"
+    )
+    return parser.parse_args()
 
 
 def ensure_local_repo(token: Optional[str]) -> None:
@@ -175,13 +241,14 @@ def load_city_pool() -> List[Dict[str, Any]]:
         city_en, country = parts[0], parts[1]
         if not city_en or not country:
             continue
-        slug = city_en.lower().replace(",", "").replace(" ", "-")
+        slug = slugify(city_en)
         photo = f"/images/cities/{slug}.jpg"
         cities.append(
             {
                 "en": city_en,
                 "zh": city_en,  # no zh provided; fall back to en
                 "country": country,
+                "slug": slug,
                 "photoUrl": photo,
             }
         )
@@ -480,6 +547,7 @@ def main() -> None:
     # Load .env from the working directory so HF_TOKEN is picked up
     # automatically.
     load_dotenv(dotenv_path=".env")
+    args = parse_args()
     hf_token = os.getenv("HF_TOKEN")
     gh_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
@@ -496,24 +564,26 @@ def main() -> None:
         print("Proceeding with preferred model (if any).")
         model_ids = []
 
-    city_override = os.getenv("CITY_EN")
-    if city_override:
-        city_en = city_override
-        city_zh = os.getenv("CITY_ZH", DEFAULT_CITY_ZH)
-        country = os.getenv("COUNTRY", DEFAULT_COUNTRY)
-        photo_url = os.getenv("PHOTO_URL", DEFAULT_PHOTO)
-    else:
-        city_pool = load_city_pool()
-        used_cities = load_used_cities()
-        chosen_city = choose_city(city_pool, used_cities)
-        city_en = chosen_city.get("en", DEFAULT_CITY_EN)
-        city_zh = chosen_city.get("zh", DEFAULT_CITY_ZH)
-        country = chosen_city.get("country", DEFAULT_COUNTRY)
-        photo_url = chosen_city.get("photoUrl", DEFAULT_PHOTO)
+    preferred_model = args.preferred_model
 
-    date_str = os.getenv("POST_DATE") or date.today().isoformat()
-    slug = city_en.lower().replace(",", "").replace(" ", "-")
+    city_en, city_zh, country, slug, photo_url = resolve_city_and_photo(
+        args.city_en, args.country
+    )
 
+    # Ensure slug uniqueness in local repo; update photo_url to match final slug
+    unique_slug = ensure_unique_slug(slug)
+    if unique_slug != slug:
+        print(f"Slug '{slug}' already exists. Using '{unique_slug}' instead.")
+        slug = unique_slug
+        photo_url = f"/images/cities/{slug}.jpg"
+
+    if not city_en or not country:
+        raise RuntimeError("CITY_EN and COUNTRY are required (provide via CLI args or city list).")
+
+    print(f"Using city: {city_en}, {country}; slug={slug}; city_zh={city_zh}; preferred_model={preferred_model}")
+    write_github_output(city_en, country, slug)
+
+    date_str = date.today().isoformat()
     # Generate Image
     image_bytes = generate_city_image(hf_token, city_en, country)
     if image_bytes:
@@ -526,13 +596,12 @@ def main() -> None:
             photo_url = f"/images/cities/{slug}.jpg"
         except Exception as e:
             print(f"Failed to save local image: {e}")
-            photo_url = DEFAULT_PHOTO
+            photo_url = photo_url or f"/images/cities/{slug}.jpg"
     else:
-        print("Using default photo URL due to generation failure.")
+        print("Using fallback photo URL due to image generation failure.")
 
     # Generate English Content
     print("\n--- Generating English Content ---")
-    preferred_model = os.getenv("PREFERRED_MODEL")
     summary_en, content_en, model_en, _, _ = generate_blog_content(
         model_ids,
         token=hf_token,
@@ -613,6 +682,7 @@ def main() -> None:
     print("\n--- Post Created ---")
     print(f"Local Path: {posts_dir}")
     print(f"Models Used: EN={model_en}, ZH={model_zh}")
+    print(f"Post URLs: /posts/{slug}/en and /posts/{slug}/zh")
 
     # Push to GitHub
     push_to_github(city_en)
