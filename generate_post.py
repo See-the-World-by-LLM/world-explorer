@@ -86,6 +86,32 @@ def slugify(city_en: str) -> str:
     return slug or "post"
 
 
+def clean_meta_value(value: Any) -> str:
+    text = "" if value is None else str(value)
+    # Remove common LLM placeholder markers like "[xxx] →"
+    text = re.sub(r"\[.*?\]\s*→\s*", "", text)
+    # Collapse whitespace and trim
+    return " ".join(text.split()).strip()
+
+
+def clean_summary(value: Any) -> str:
+    text = clean_meta_value(value)
+    # Keep summary single-line
+    return " ".join(text.split())
+
+
+def normalize_content(text: Any) -> str:
+    if isinstance(text, list):
+        text = "\n".join(text)
+    text = str(text or "")
+    lines = text.splitlines()
+    # Drop leading empty or decorative lines like '**'
+    while lines and lines[0].strip() in {"", "**", "__", "*"}:
+        lines.pop(0)
+    normalized = "\n".join(lines).strip()
+    return normalized
+
+
 def ensure_unique_slug(base_slug: str) -> str:
     """If a post folder already exists for this slug, append a numeric suffix."""
     posts_root = LOCAL_REPO_PATH / "src/data/posts"
@@ -611,6 +637,8 @@ def main() -> None:
         lang="en",
         preferred_model=preferred_model,
     )
+    summary_en = clean_summary(summary_en)
+    content_en = normalize_content(content_en)
 
     # Generate Chinese Content
     print("\n--- Generating Chinese Content ---")
@@ -625,10 +653,12 @@ def main() -> None:
             preferred_model=preferred_model,
         )
     )
+    summary_zh = clean_summary(summary_zh)
+    content_zh = normalize_content(content_zh)
 
     # Use parsed Chinese names if available, otherwise fallback to existing
-    final_city_zh = parsed_city_zh if parsed_city_zh else city_zh
-    final_country_zh = parsed_country_zh if parsed_country_zh else country
+    final_city_zh = clean_meta_value(parsed_city_zh if parsed_city_zh else city_zh)
+    final_country_zh = clean_meta_value(parsed_country_zh if parsed_country_zh else country)
 
     # Save post locally as Markdown
     # Structure: src/data/posts/[slug]/en.md and src/data/posts/[slug]/zh.md
