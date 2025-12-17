@@ -25,6 +25,36 @@ import requests
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 
+# Set USE_LOCAL_MODELS to True to use the predefined SELECTED_MODELS list
+# Set USE_LOCAL_MODELS to False to fetch models from HuggingFace API
+USE_LOCAL_MODELS = True
+
+# Predefined list of selected models
+SELECTED_MODELS = [
+    "deepseek-ai/DeepSeek-V3.2",
+    "zai-org/GLM-4.6",
+    "moonshotai/Kimi-K2-Thinking",
+    "openai/gpt-oss-120b",
+    "MiniMaxAI/MiniMax-M2",
+    "zai-org/GLM-4.5-Air",
+    "deepseek-ai/DeepSeek-R1",
+    "moonshotai/Kimi-K2-Instruct",
+    "deepseek-ai/DeepSeek-V3",
+    "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "Qwen/Qwen2.5-72B",
+    "deepseek-ai/DeepSeek-R1-0528",
+    "zai-org/GLM-4.5",
+    "deepseek-ai/DeepSeek-V3.1",
+    "meta-llama/Meta-Llama-3-70B-Instruct",
+    "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "Qwen/Qwen3-Next-80B-A3B-Thinking",
+    "inclusionAI/Ling-1T",
+    "baidu/ERNIE-4.5-300B-A47B-Base-PT",
+    "Qwen/Qwen3-235B-A22B",
+    "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+]
+
 API_URL = "https://huggingface.co/api/models"
 GITHUB_API = "https://api.github.com"
 DEFAULT_PIPELINE_TAG = "text-generation"
@@ -168,7 +198,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--city-en", dest="city_en", help="City name in English")
     parser.add_argument("--country", dest="country", help="Country name")
     parser.add_argument(
-        "--preferred-model", dest="preferred_model", help="Preferred HF model id (optional)"
+        "--preferred-model",
+        dest="preferred_model",
+        help="Preferred HF model id (optional)",
     )
     return parser.parse_args()
 
@@ -245,6 +277,18 @@ def fetch_models(
             print(f"{idx}: {mid} (downloads={downloads})")
 
     return model_ids
+
+
+def get_models(token: Optional[str] = None) -> List[str]:
+    """Get models either from predefined list or HuggingFace API based on USE_LOCAL_MODELS setting."""
+    if USE_LOCAL_MODELS:
+        print(f"Using predefined list of {len(SELECTED_MODELS)} models")
+        for idx, model_id in enumerate(SELECTED_MODELS, start=1):
+            print(f"{idx}: {model_id}")
+        return SELECTED_MODELS.copy()
+    else:
+        print("Fetching models from HuggingFace API")
+        return fetch_models(token=token)
 
 
 def load_city_pool() -> List[Dict[str, Any]]:
@@ -327,10 +371,40 @@ def generate_city_image(token: str, city_en: str, country: str) -> Optional[byte
 
     # Randomize anime girl characteristics
     hair = random.choice(
-        ["pink", "blue", "silver", "blonde", "purple", "black", "brown", "red"]
+        [
+            "pink",
+            "blue",
+            "silver",
+            "blonde",
+            "purple",
+            "black",
+            "brown",
+            "red",
+            "white",
+            "green",
+            "orange",
+            "lavender",
+            "teal",
+            "mint",
+            "rainbow",
+        ]
     )
     style = random.choice(
-        ["long flowing", "short bob", "twin tails", "ponytail", "wavy"]
+        [
+            "long flowing",
+            "short bob",
+            "twin tails",
+            "ponytail",
+            "wavy",
+            "braided",
+            "curly",
+            "straight",
+            "messy bun",
+            "side ponytail",
+            "pigtails",
+            "half-up half-down",
+            "pixie cut",
+        ]
     )
     outfit = random.choice(
         [
@@ -339,14 +413,77 @@ def generate_city_image(token: str, city_en: str, country: str) -> Optional[byte
             "stylish jacket",
             "traditional outfit",
             "school uniform",
+            "cozy sweater",
+            "denim jacket",
+            "kimono",
+            "sports jacket",
+            "leather jacket",
+            "sundress",
+            "winter coat",
+            "cardigan",
+            "blazer",
+        ]
+    )
+    pose = random.choice(
+        [
+            "smiling and waving",
+            "holding up",
+            "cheerfully presenting",
+            "happily showing",
+            "excitedly displaying",
+            "proudly holding",
+        ]
+    )
+    accessory = random.choice(
+        [
+            "",
+            ", wearing sunglasses",
+            ", with a backpack",
+            ", with a hat",
+            ", with headphones",
+            ", with a scarf",
+            ", wearing a cap",
+            ", with cute earrings",
+            "",
+        ]
+    )
+    time_of_day = random.choice(
+        [
+            "",
+            " during golden hour",
+            " at sunset",
+            " in bright daylight",
+            " in the afternoon",
+            " during blue hour",
+            "",
+        ]
+    )
+    weather = random.choice(
+        [
+            "",
+            ", clear sky",
+            ", with fluffy clouds",
+            ", sunny weather",
+            ", beautiful sky",
+            "",
+        ]
+    )
+    art_style = random.choice(
+        [
+            "Anime style",
+            "Studio Ghibli style",
+            "Modern anime style",
+            "Vibrant anime style",
+            "Detailed anime style",
+            "Soft anime style",
         ]
     )
 
     prompt = (
-        f"A cute anime girl with {hair} {style} hair, wearing {outfit}, "
-        f"holding a sign board that says '{city_en}, {country}'. "
-        f"Background is a scenic view of {city_en}. "
-        "Anime style, high quality, detailed, 8k resolution, 16:9 aspect ratio."
+        f"A cute anime girl with {hair} {style} hair{accessory}, wearing {outfit}, "
+        f"{pose} a sign board that says '{city_en}, {country}'. "
+        f"Background is a scenic view of {city_en}{time_of_day}{weather}. "
+        f"{art_style}, high quality, detailed, 8k resolution, 16:9 aspect ratio."
     )
 
     for attempt in range(1, MAX_IMAGE_GENERATION_TRIES + 1):
@@ -400,7 +537,9 @@ def generate_blog_content(
             models_to_try.append(m)
 
     if not models_to_try:
-        raise RuntimeError("No models available to generate from (preferred model missing and fetch failed).")
+        raise RuntimeError(
+            "No models available to generate from (preferred model missing and fetch failed)."
+        )
 
     last_error: Optional[Exception] = None
     max_tries = min(MAX_GENERATION_TRIES, len(models_to_try))
@@ -584,9 +723,9 @@ def main() -> None:
     ensure_local_repo(gh_token)
 
     try:
-        model_ids = fetch_models(token=hf_token)
+        model_ids = get_models(token=hf_token)
     except Exception as e:
-        print(f"Warning: Failed to fetch models from API: {e}")
+        print(f"Warning: Failed to get models: {e}")
         print("Proceeding with preferred model (if any).")
         model_ids = []
 
@@ -604,9 +743,13 @@ def main() -> None:
         photo_url = f"/images/cities/{slug}.jpg"
 
     if not city_en or not country:
-        raise RuntimeError("CITY_EN and COUNTRY are required (provide via CLI args or city list).")
+        raise RuntimeError(
+            "CITY_EN and COUNTRY are required (provide via CLI args or city list)."
+        )
 
-    print(f"Using city: {city_en}, {country}; slug={slug}; city_zh={city_zh}; preferred_model={preferred_model}")
+    print(
+        f"Using city: {city_en}, {country}; slug={slug}; city_zh={city_zh}; preferred_model={preferred_model}"
+    )
     write_github_output(city_en, country, slug)
 
     date_str = date.today().isoformat()
@@ -658,7 +801,9 @@ def main() -> None:
 
     # Use parsed Chinese names if available, otherwise fallback to existing
     final_city_zh = clean_meta_value(parsed_city_zh if parsed_city_zh else city_zh)
-    final_country_zh = clean_meta_value(parsed_country_zh if parsed_country_zh else country)
+    final_country_zh = clean_meta_value(
+        parsed_country_zh if parsed_country_zh else country
+    )
 
     # Save post locally as Markdown
     # Structure: src/data/posts/[slug]/en.md and src/data/posts/[slug]/zh.md
