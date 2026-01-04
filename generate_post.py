@@ -117,16 +117,58 @@ def slugify(city_en: str) -> str:
 
 
 def clean_meta_value(value: Any) -> str:
-    text = "" if value is None else str(value)
-    # Remove common LLM placeholder markers like "[xxx] →"
-    text = re.sub(r"\[.*?\]\s*→\s*", "", text)
-    # Collapse whitespace and trim
-    return " ".join(text.split()).strip()
+    if value is None:
+        return ""
+    text = str(value).strip()
+
+    # 1. Remove Markdown formatting
+    text = re.sub(r"(\*\*|__|\*|_|`|~)", "", text)
+
+    # 2. Handle explicit quotes (Chinese or English)
+    # If the text contains quotes, it's likely the value is inside them.
+    quote_match = re.search(r'["“](.+?)["”]', text)
+    if quote_match:
+        return quote_match.group(1).strip()
+
+    # 3. Remove specific placeholders in brackets
+    placeholder_keywords = [
+        r"insert", r"placeholder", r"replace", r"here",
+        r"城市的中文名称", r"国家的中文名称", r"城市中文名", r"国家中文名",
+        r"city\s*name", r"country\s*name"
+    ]
+    pattern = r"\[\s*.*?(?:" + "|".join(placeholder_keywords) + r").*?\]"
+    text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+
+    # 4. Remove brackets if they still exist
+    text = text.replace("[", "").replace("]", "")
+
+    # 5. Remove explanations in parentheses
+    text = re.sub(r"[(（].*?[)）]", "", text)
+
+    # 6. Remove common prefixes/suffixes and noise
+    text = re.sub(r"^(?:city|country)(?:\s+(?:name|zh))?\s*[:：]\s*", "", text, flags=re.IGNORECASE)
+
+    noise_patterns = [
+        r"城市的中文名称", r"国家的中文名称", r"中文名(?:称)?(?:是|为)?",
+        r"所以是", r"即", r"city_zh", r"country_zh"
+    ]
+    for pattern in noise_patterns:
+        text = re.sub(pattern, "", text)
+
+    # 7. Remove leading/trailing punctuation and whitespace
+    text = text.strip(" \t\n\r-–—:：.,")
+
+    # 8. Collapse whitespace
+    return " ".join(text.split())
 
 
 def clean_summary(value: Any) -> str:
-    text = clean_meta_value(value)
-    # Keep summary single-line
+    text = "" if value is None else str(value)
+    # Remove common LLM placeholder markers like "[xxx] →"
+    text = re.sub(r"\[.*?\]\s*→\s*", "", text)
+    # Remove surrounding quotes
+    text = text.strip().strip('"').strip("'")
+    # Collapse whitespace
     return " ".join(text.split())
 
 
