@@ -913,7 +913,7 @@ def main() -> None:
     print(f"Post URLs: /posts/{slug}/en and /posts/{slug}/zh")
 
     # Push to GitHub
-    #push_to_github(city_en)
+    push_to_github(city_en)
 
 
 if __name__ == "__main__":
