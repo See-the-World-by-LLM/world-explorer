@@ -105,7 +105,10 @@ POSTS_DIR = "src/data/posts"
 CITY_LIST_PATH = os.getenv("CITY_LIST_PATH", "src/data/cities.txt")
 
 MIN_CONTENT_LEN = 200
-IMAGE_MODEL = "Tongyi-MAI/Z-Image-Turbo"
+IMAGE_MODELS = [
+    "Tongyi-MAI/Z-Image-Turbo",
+    "zai-org/GLM-Image",
+]
 LOCAL_REPO_PATH = Path("see-the-world-by-llm")
 
 
@@ -408,7 +411,8 @@ def choose_city(cities: List[Dict[str, Any]], used: List[str]) -> Dict[str, Any]
     return random.choice(available)
 
 
-def generate_city_image(token: str, city_en: str, country: str) -> Optional[bytes]:
+def generate_city_image(token: str, city_en: str, country: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Generate image and return (image_bytes, model_used) tuple."""
     client = InferenceClient(api_key=token)
 
     # Randomize anime girl characteristics
@@ -529,27 +533,28 @@ def generate_city_image(token: str, city_en: str, country: str) -> Optional[byte
     )
 
     for attempt in range(1, MAX_IMAGE_GENERATION_TRIES + 1):
+        image_model = random.choice(IMAGE_MODELS)
         print(
-            f"Generating image for {city_en} (Attempt {attempt}/{MAX_IMAGE_GENERATION_TRIES})..."
+            f"Generating image for {city_en} (Attempt {attempt}/{MAX_IMAGE_GENERATION_TRIES}) using {image_model}..."
         )
         try:
             image = client.text_to_image(
                 prompt,
                 width=1600,
-                height=900,
-                model=IMAGE_MODEL,
+                height=896,
+                model=image_model,
             )
             img_byte_arr = io.BytesIO()
             image.save(img_byte_arr, format="JPEG", quality=85)
-            print("Image generation successful.")
-            return img_byte_arr.getvalue()
+            print(f"Image generation successful with model: {image_model}")
+            return img_byte_arr.getvalue(), image_model
         except Exception as e:
             print(f"Image generation failed (Attempt {attempt}): {e}")
             if attempt < MAX_IMAGE_GENERATION_TRIES:
                 time.sleep(SLEEP_SECONDS * attempt)
 
     print("All image generation attempts failed.")
-    return None
+    return None, None
 
 
 def generate_blog_content(
@@ -796,7 +801,7 @@ def main() -> None:
 
     date_str = date.today().isoformat()
     # Generate Image
-    image_bytes = generate_city_image(hf_token, city_en, country)
+    image_bytes, image_model = generate_city_image(hf_token, city_en, country)
     if image_bytes:
         # Save image locally
         local_image_path = LOCAL_REPO_PATH / "public/images/cities" / f"{slug}.jpg"
@@ -810,6 +815,7 @@ def main() -> None:
             photo_url = photo_url or f"/images/cities/{slug}.jpg"
     else:
         print("Using fallback photo URL due to image generation failure.")
+        image_model = None
 
     # Generate English Content
     print("\n--- Generating English Content ---")
@@ -854,7 +860,7 @@ def main() -> None:
 
     # Helper to format frontmatter
     def create_markdown(
-        lang_content: str, lang_summary: str, lang_code: str, model_name: str
+        lang_content: str, lang_summary: str, lang_code: str, model_name: str, img_model: Optional[str] = None
     ) -> str:
         # Ensure content is a string (handle list case from previous errors)
         if isinstance(lang_content, list):
@@ -862,7 +868,7 @@ def main() -> None:
         if isinstance(lang_summary, list):
             lang_summary = "\n".join(lang_summary)
 
-        return (
+        frontmatter = (
             "---\n"
             f"title: {city_en if lang_code == 'en' else final_city_zh}\n"
             f"date: {date_str}\n"
@@ -874,10 +880,15 @@ def main() -> None:
             f"slug: {slug}\n"
             f"photoUrl: {photo_url}\n"
             f"model: {model_name}\n"
+        )
+        if img_model:
+            frontmatter += f"imageModel: {img_model}\n"
+        frontmatter += (
             f'summary: "{lang_summary.replace('"', '\\"')}"\n'
             "---\n\n"
             f"{lang_content}\n"
         )
+        return frontmatter
 
     posts_dir = LOCAL_REPO_PATH / "src/data/posts" / slug
     print(f"Saving posts to {posts_dir}...")
@@ -886,11 +897,11 @@ def main() -> None:
         posts_dir.mkdir(parents=True, exist_ok=True)
 
         # Save English
-        en_md = create_markdown(content_en, summary_en, "en", model_en)
+        en_md = create_markdown(content_en, summary_en, "en", model_en, image_model)
         (posts_dir / "en.md").write_text(en_md, encoding="utf-8")
 
         # Save Chinese
-        zh_md = create_markdown(content_zh, summary_zh, "zh", model_zh)
+        zh_md = create_markdown(content_zh, summary_zh, "zh", model_zh, image_model)
         (posts_dir / "zh.md").write_text(zh_md, encoding="utf-8")
 
     except Exception as e:
@@ -898,11 +909,11 @@ def main() -> None:
 
     print("\n--- Post Created ---")
     print(f"Local Path: {posts_dir}")
-    print(f"Models Used: EN={model_en}, ZH={model_zh}")
+    print(f"Models Used: EN={model_en}, ZH={model_zh}, Image={image_model}")
     print(f"Post URLs: /posts/{slug}/en and /posts/{slug}/zh")
 
     # Push to GitHub
-    push_to_github(city_en)
+    #push_to_github(city_en)
 
 
 if __name__ == "__main__":
