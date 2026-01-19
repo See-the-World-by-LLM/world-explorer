@@ -108,6 +108,11 @@ MIN_CONTENT_LEN = 200
 IMAGE_MODELS = [
     "Tongyi-MAI/Z-Image-Turbo",
     "zai-org/GLM-Image",
+    "Qwen/Qwen-Image-2512",
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-3.5-large",
+    "tencent/HunyuanImage-3.0",
+    "meituan-longcat/LongCat-Image",
 ]
 LOCAL_REPO_PATH = Path("see-the-world-by-llm")
 
